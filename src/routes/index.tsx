@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { GoldChart } from "@/components/GoldChart";
 import { Badge, Button } from "@/components/ui";
-import { analyzeSetup, getGoldScan, sendTelegramOrder } from "@/lib/server/actions";
+import { analyzeSetup, getGoldScan, sendTelegramSignal, sendTelegramOrder } from "@/lib/server/actions";
 import { checkRisk, orderTelegramText } from "@/lib/strategy/risk";
 import type {
   AiVerdict,
@@ -42,6 +42,7 @@ function Home() {
   const [aiBusy, setAiBusy] = useState(false);
   const [orders, setOrders] = useState<PaperOrder[]>([]);
   const [note, setNote] = useState<string | null>(null);
+  const [seenSignals] = useState(() => new Set<string>());
 
   const load = useCallback(async () => {
     setError(null);
@@ -60,9 +61,65 @@ function Home() {
 
   useEffect(() => {
     void load();
-    const id = window.setInterval(() => void load(), 90_000);
-    return () => window.clearInterval(id);
   }, [load]);
+
+  // Auto-poll and send new high-quality signals to Telegram
+  useEffect(() => {
+    const seen = seenSignals;
+    let cancelled = false;
+
+    const tick = async () => {
+      const data = await getGoldScan().catch(() => null);
+      if (!data || cancelled) return;
+      setMarket(data.market);
+      setSetups(data.setups);
+      setZones(data.zones);
+
+      for (const setup of data.setups) {
+        if (seen.has(setup.id)) continue;
+        if (setup.quality !== "A+" && setup.quality !== "A") continue;
+        try {
+          const aiVerdict = await analyzeSetup({
+            data: { setup, last: data.market.last },
+          });
+          const riskVerdict = checkRisk(setup, data.market.last, aiVerdict);
+          if (!riskVerdict.allowed || aiVerdict.verdict === "RAD") {
+            seen.add(setup.id);
+            continue;
+          }
+
+          const signal = {
+            signalId: `${setup.id}-${setup.child.time}`,
+            setupId: setup.id,
+            sentAt: Date.now(),
+            direction: setup.direction,
+            tf: setup.tf,
+          } as const;
+
+          const tg = await sendTelegramSignal({
+            data: {
+              signal,
+              setup,
+              last: data.market.last,
+              ai: aiVerdict,
+            },
+          });
+
+          if (tg.ok) setNote(`Telegram: ${setup.direction} ${setup.tf} signali yuborildi.`);
+          seen.add(setup.id);
+        } catch {
+          // retry later
+        }
+      }
+    };
+
+    const id = window.setInterval(() => void tick(), 30_000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [seenSignals]);
 
   const selected = setups.find((s) => s.id === selectedId) ?? setups[0];
   const candles = market?.candles[tf] ?? [];
@@ -179,8 +236,7 @@ function Home() {
             onSelect={setSelectedId}
           />
           <p className="text-xs text-muted">
-            Sariq-kulrang to‘rtburchak — Inside Bar zonasi (ona/bola soya). Ko‘k-kulrang —
-            oldin ishlagan likvidlik zonalari.
+            Sariq-kulrang to‘rtburchak — Inside Bar zonasi. Ko‘k-kulrang — ishlagan likvidlik zonalari.
           </p>
 
           <Pipeline stage={stage} />
@@ -239,7 +295,7 @@ function Home() {
             {error && <p className="text-sm text-bear">{error}</p>}
             <div className="max-h-[360px] space-y-2 overflow-auto">
               {strong.length === 0 && !loading && (
-                <p className="text-sm text-muted">Hozir A+/A signal yo‘q. C/B pastda.</p>
+                <p className="text-sm text-muted">Hozir A+/A signal yo‘q.</p>
               )}
               {(strong.length ? strong : setups.slice(0, 8)).map((s) => (
                 <button
@@ -300,8 +356,7 @@ function Home() {
               <ShieldCheck className="size-4" /> Executor · GOLD
             </h2>
             <p className="mb-2 text-xs text-muted">
-              Web MT5 hisobiga kira olmaydi. Limit order Telegramga ketadi, siz MT5 da GOLD
-              ga qo‘yasiz.
+              Web MT5 hisobiga kira olmaydi. Limit order Telegramga ketadi.
             </p>
             {orders.length === 0 && <p className="text-sm text-muted">Hali order yo‘q</p>}
             {orders.map((o) => (
