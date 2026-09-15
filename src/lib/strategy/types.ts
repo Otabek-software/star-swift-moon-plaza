@@ -94,3 +94,22 @@ export type PaperOrder = {
   telegram: boolean;
   createdAt: number;
 };
+
+export type TelegramSignal = {
+  signalId: string;
+  setupId: string;
+  sentAt: number;
+  direction: Direction;
+  tf: Timeframe;
+};
+
+export type PaperLimitDraft = {
+  signalId: string;
+  setupId: string;
+  direction: Direction;
+  tf: Timeframe;
+  lot?: number;
+  entry?: number;
+  sl?: number;
+  createdAt: number;
+};

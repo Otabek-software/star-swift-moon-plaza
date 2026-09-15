@@ -1,51 +1,30 @@
-export type Setup = {
-  id: string;
-  direction: "BUY" | "SELL";
-  tf: string;
-  entry?: number;
-  sl?: number;
-  tp?: number;
-  reason?: string;
-};
+import { MAX_SL_PIPS } from "./engine";
+import type { AiVerdict, InsideBarSetup, RiskVerdict } from "./types";
 
-export type RiskResult = {
-  ok: boolean;
-  reason?: string;
-};
+export function checkRisk(setup: InsideBarSetup, last: number, ai?: AiVerdict | null): RiskVerdict {
+  const reasons: string[] = [];
+  if (!setup.validSl) reasons.push(`SL ${setup.slPips.toFixed(1)} pip — 20 pip limiti oshgan`);
+  if (setup.trend === "NEUTRAL") reasons.push("Trend neytral — yangi savdo yo‘q");
+  if (setup.quality === "C" && !setup.confluence) reasons.push("Sifat C va MTF yo‘q");
+  if (ai?.verdict === "RAD") reasons.push("AI signalni rad etdi");
+  if (ai?.verdict === "MAVJUD_EMAS") reasons.push("AI tasdig‘i yo‘q — ehtiyot bilan davom");
+  const dist = Math.abs(last - setup.entry) / 0.1;
+  if (dist > 80) reasons.push("Narx entry zonadan uzoq");
+  if (setup.slPips > MAX_SL_PIPS) reasons.push("Max SL buzilgan");
 
-export function checkRisk(setup: Setup, lastPrice: number): RiskResult {
-  if (!setup.entry || !setup.sl) {
-    return { ok: false, reason: "Entry yoki SL yo‘q" };
-  }
-  const risk = Math.abs(setup.entry - setup.sl);
-  if (risk <= 0) return { ok: false, reason: "Risk 0" };
-  // simple RR filter
-  if (setup.tp) {
-    const reward = Math.abs(setup.tp - setup.entry);
-    if (reward / risk < 1.2) {
-      return { ok: false, reason: "RR < 1.2" };
-    }
-  }
-  // direction sanity vs last
-  if (setup.direction === "BUY" && setup.sl >= setup.entry) {
-    return { ok: false, reason: "BUY uchun SL entry dan past bo‘lishi kerak" };
-  }
-  if (setup.direction === "SELL" && setup.sl <= setup.entry) {
-    return { ok: false, reason: "SELL uchun SL entry dan yuqori bo‘lishi kerak" };
-  }
-  return { ok: true };
+  const hardBlock = reasons.some((r) => r.includes("20 pip") || r.includes("rad etdi") || r.includes("Neytral"));
+  return { allowed: !hardBlock, reasons };
 }
 
-export function orderTelegramText(setup: Setup, last: number): string {
+export function orderTelegramText(setup: InsideBarSetup, last: number): string {
   return [
-    `📊 <b>XAUUSD ${setup.tf}</b>`,
-    `Yo‘nalish: <b>${setup.direction}</b>`,
-    setup.entry != null ? `Entry: <code>${setup.entry.toFixed(2)}</code>` : null,
-    setup.sl != null ? `SL: <code>${setup.sl.toFixed(2)}</code>` : null,
-    setup.tp != null ? `TP: <code>${setup.tp.toFixed(2)}</code>` : null,
-    `Last: <code>${last.toFixed(2)}</code>`,
-    setup.reason ? `Sabab: ${setup.reason}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `<b>IB Terminal · GOLD</b>`,
+    `${setup.direction} ${setup.tf} · ${setup.quality}`,
+    `Entry: <code>${setup.entry.toFixed(2)}</code>`,
+    `SL: <code>${setup.sl.toFixed(2)}</code> (${setup.slPips.toFixed(1)} pip)`,
+    `TP: 60 / 120 / 220 / 300 pip`,
+    `MTF: ${setup.mtf.join(" + ")}`,
+    `Narx: ${last.toFixed(2)}`,
+    setup.reasons.join(" · "),
+  ].join("\n");
 }
